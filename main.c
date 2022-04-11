@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <string.h>
 #include <sys/ioctl.h>
 
 /*** DEFINES ***/
@@ -103,29 +104,61 @@ int get_window_size(int *cols, int *rows)
     }
 }
 
+/*** APPEND BUFFER ***/
+
+struct abuf
+{
+    char *b;
+    int len;
+};
+
+#define ABUF_INIT { NULL, 0 };
+
+void ab_append(struct abuf *ab, const char *s, int len)
+{
+    char *new = realloc(ab->b, ab->len + len);
+
+    if(new == NULL) return;
+    memcpy(new + ab->len, s, len);
+    ab->b = new;
+    ab->len += len;
+}
+
+void ab_free(struct abuf *ab)
+{
+    free(ab->b);
+}
+
+
+
 /*** OUTPUT ***/
 
-void editor_draw_rows()
+void editor_draw_rows(struct abuf *ab)
 {
     for(int y = 0; y < ed_cfg.screen_rows; ++y)
     {
-        write(STDOUT_FILENO, "~", 1);
+        ab_append(ab, "~", 1);
 
         if(y < ed_cfg.screen_rows - 1)
         {
-            write(STDOUT_FILENO, "\r\n", 2);
+            ab_append(ab, "\r\n", 2);
         }
     }
 }
 
 void editor_refresh_screen()
 {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    struct abuf ab = ABUF_INIT;
 
-    editor_draw_rows();
+    ab_append(&ab, "\x1b[2J", 4);
+    ab_append(&ab, "\x1b[H", 3);
 
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    editor_draw_rows(&ab);
+
+    ab_append(&ab, "\x1b[H", 3);
+
+    write(STDOUT_FILENO, ab.b, ab.len);
+    ab_free(&ab);
 }
 
 /*** INPUT ***/
