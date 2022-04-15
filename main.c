@@ -8,14 +8,28 @@
 #include <sys/ioctl.h>
 
 /*** DEFINES ***/
+
+#define RX_ED_VERSION "0.0.1"
+
 #define CTRL_KEY(k) ((k) & 0x1f)
+
+enum editor_key
+{
+    ARROW_LEFT = 'a',
+    ARROW_RIGHT = 'd',
+    ARROW_UP = 'w',
+    ARROW_DOWN = 's',
+};
 
 /*** DATA ***/
 struct editor_config
 {
     struct termios orig_termios;
+
     int screen_cols;
     int screen_rows;
+
+    int cursor_x, cursor_y;
 };
 
 struct editor_config ed_cfg;
@@ -48,8 +62,6 @@ void enable_raw_mode()
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 20;
 
     if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 1)
         die("tcsetattr");
@@ -64,7 +76,34 @@ char editor_read_key()
     {
         if(nread == -1 && errno != EAGAIN) die("read");
     }
-    return c;
+
+    if(c == '\x1b')
+    {
+        char seq[3];
+
+        if(read(STDIN_FILENO, seq, 1) != 1) return '\x1b';
+        if(read(STDIN_FILENO, seq + 1, 1) != 1) return '\x1b';
+
+        if(seq[0] == '[')
+        {
+            switch(seq[1])
+            {
+                case 'A':
+                    return ARROW_UP;
+                case 'B':
+                    return ARROW_DOWN;
+                case 'C':
+                    return ARROW_RIGHT;
+                case 'D':
+                    return ARROW_LEFT;
+            }
+        }
+        return '\x1b';
+    }
+    else
+    {
+        return c;
+    }
 }
 
 int get_cursor_position(int *cols, int *rows)
@@ -137,8 +176,29 @@ void editor_draw_rows(struct abuf *ab)
 {
     for(int y = 0; y < ed_cfg.screen_rows; ++y)
     {
-        ab_append(ab, "~", 1);
+        if(y == ed_cfg.screen_rows / 3)
+        {
+            char welcome[80] = {0};
+            int welcome_ln = snprintf(welcome, sizeof(welcome), "rx_ed - version %s", RX_ED_VERSION);
 
+            if(welcome_ln > ed_cfg.screen_cols) welcome_ln = ed_cfg.screen_cols;
+            int padding = (ed_cfg.screen_cols - welcome_ln) / 2;
+            if(padding)
+            {
+                ab_append(ab, "~", 1);
+                --padding;
+            }
+            while(padding--) ab_append(ab, " ", 1);
+
+
+            ab_append(ab, welcome, welcome_ln);
+        }
+        else
+        {
+            ab_append(ab, "~", 1);
+        }
+
+        ab_append(ab, "\x1b[K", 3); // clear the line (default - to the right of the cursor)
         if(y < ed_cfg.screen_rows - 1)
         {
             ab_append(ab, "\r\n", 2);
@@ -150,18 +210,40 @@ void editor_refresh_screen()
 {
     struct abuf ab = ABUF_INIT;
 
-    ab_append(&ab, "\x1b[2J", 4);
-    ab_append(&ab, "\x1b[H", 3);
+    ab_append(&ab, "\x1b[?25l", 6); //hide the cursor
+    ab_append(&ab, "\x1b[H", 3); // reposition the cursor (default - 1;1)
 
     editor_draw_rows(&ab);
 
-    ab_append(&ab, "\x1b[H", 3);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", ed_cfg.cursor_x + 1, ed_cfg.cursor_y);
+    ab_append(&ab, buf, strlen(buf));
+
+    ab_append(&ab, "\x1b[?25h", 6); // show the cursor
 
     write(STDOUT_FILENO, ab.b, ab.len);
     ab_free(&ab);
 }
 
 /*** INPUT ***/
+
+void editor_move_cursor(char key)
+{
+    switch(key)
+    {
+        case ARROW_LEFT:
+            --ed_cfg.cursor_x; break;
+        case ARROW_RIGHT:
+            ++ed_cfg.cursor_x; break;
+        case ARROW_UP:
+            --ed_cfg.cursor_y; break;
+        case ARROW_DOWN:
+            ++ed_cfg.cursor_y; break;
+        default: break;
+    }
+}
+
+
 
 void editor_process_keypress()
 {
@@ -175,6 +257,12 @@ void editor_process_keypress()
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+        case ARROW_LEFT:
+        case ARROW_RIGHT:
+        case ARROW_UP:
+        case ARROW_DOWN:
+            editor_move_cursor(c);
+            break;
         default:
             break;
     }
@@ -184,6 +272,9 @@ void editor_process_keypress()
 
 void init_editor()
 {
+    ed_cfg.cursor_x = 0;
+    ed_cfg.cursor_y = 0;
+
     if(get_window_size(&ed_cfg.screen_cols, &ed_cfg.screen_rows) == -1)
         die("get_window_size");
 }
