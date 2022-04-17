@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 
 /*** DEFINES ***/
 
@@ -27,6 +28,13 @@ enum editor_key
 };
 
 /*** DATA ***/
+
+typedef struct erow
+{
+    int size;
+    char *data;
+} erow;
+
 struct editor_config
 {
     struct termios orig_termios;
@@ -34,12 +42,16 @@ struct editor_config
     int screen_cols;
     int screen_rows;
 
+    int num_rows;
+    erow row;
+
     int cursor_x, cursor_y;
 };
 
 struct editor_config ed_cfg;
 
 /*** TERMINAL ***/
+
 void die(const char *s)
 {
     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -190,6 +202,21 @@ int get_window_size(int *cols, int *rows)
     }
 }
 
+/*** file i/o ***/
+
+void editor_open()
+{
+    char *line = "Hello, world!";
+    ssize_t linelen = 13;
+
+    ed_cfg.row.size = linelen;
+    ed_cfg.row.data = malloc(linelen + 1);
+
+    memcpy(ed_cfg.row.data, line, linelen);
+    ed_cfg.row.data[linelen] = '\0';
+    ed_cfg.num_rows = 1;
+}
+
 /*** APPEND BUFFER ***/
 
 struct abuf
@@ -223,28 +250,37 @@ void editor_draw_rows(struct abuf *ab)
 {
     for(int y = 0; y < ed_cfg.screen_rows; ++y)
     {
-        if(y == ed_cfg.screen_rows / 3)
+        if(y >= ed_cfg.num_rows)
         {
-            char welcome[80] = {0};
-            int welcome_ln = snprintf(welcome, sizeof(welcome), "rx_ed - version %s", RX_ED_VERSION);
+            if (y == ed_cfg.screen_rows / 3)
+            {
+                char welcome[80] = {0};
+                int welcome_ln = snprintf(welcome, sizeof(welcome), "rx_ed - version %s", RX_ED_VERSION);
 
-            if(welcome_ln > ed_cfg.screen_cols) welcome_ln = ed_cfg.screen_cols;
-            int padding = (ed_cfg.screen_cols - welcome_ln) / 2;
-            if(padding)
+                if (welcome_ln > ed_cfg.screen_cols) welcome_ln = ed_cfg.screen_cols;
+                int padding = (ed_cfg.screen_cols - welcome_ln) / 2;
+                if (padding)
+                {
+                    ab_append(ab, "~", 1);
+                    --padding;
+                }
+                while (padding--) ab_append(ab, " ", 1);
+
+
+                ab_append(ab, welcome, welcome_ln);
+            }
+            else
             {
                 ab_append(ab, "~", 1);
-                --padding;
             }
-            while(padding--) ab_append(ab, " ", 1);
-
-
-            ab_append(ab, welcome, welcome_ln);
         }
         else
         {
-            ab_append(ab, "~", 1);
-        }
+            int len = ed_cfg.row.size;
+            if(len > ed_cfg.screen_cols) len = ed_cfg.screen_cols;
 
+            ab_append(ab, ed_cfg.row.data, len);
+        }
         ab_append(ab, "\x1b[K", 3); // clear the line (default - to the right of the cursor)
         if(y < ed_cfg.screen_rows - 1)
         {
@@ -338,6 +374,8 @@ void init_editor()
     ed_cfg.cursor_x = 0;
     ed_cfg.cursor_y = 0;
 
+    ed_cfg.num_rows = 0;
+
     if(get_window_size(&ed_cfg.screen_cols, &ed_cfg.screen_rows) == -1)
         die("get_window_size");
 }
@@ -345,6 +383,7 @@ int main()
 {
     enable_raw_mode();
     init_editor();
+    editor_open();
 
     while(1) {
         editor_refresh_screen();
