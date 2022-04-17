@@ -43,7 +43,7 @@ struct editor_config
     int screen_rows;
 
     int num_rows;
-    erow row;
+    erow *row;
 
     int cursor_x, cursor_y;
 };
@@ -202,6 +202,20 @@ int get_window_size(int *cols, int *rows)
     }
 }
 
+/*** row operations ***/
+
+void editor_append_row(char *s, size_t len)
+{
+    ed_cfg.row = realloc(ed_cfg.row, sizeof(erow) * (ed_cfg.num_rows + 1));
+
+    int at = ed_cfg.num_rows;
+    ed_cfg.row[at].data = malloc(len + 1);
+    ed_cfg.row[at].size = len;
+    memcpy(ed_cfg.row[at].data, s, len);
+    ed_cfg.row[at].data[len] = '\0';
+    ++ed_cfg.num_rows;
+}
+
 /*** file i/o ***/
 
 void editor_open(char *filename)
@@ -211,18 +225,14 @@ void editor_open(char *filename)
 
     char *line = NULL;
     size_t linecap = 0;
-    ssize_t linelen = getline(&line, &linecap, fp);
+    ssize_t linelen;
 
-    if(linelen != -1)
+    while((linelen = getline(&line, &linecap, fp)) != -1)
     {
-        while(linelen > 0 && line[linelen - 1] == '\n' || line[linelen - 1] == '\r')
+        while(linelen > 0 && (line[linelen - 1] == '\r' || line[linelen - 1] == '\n'))
             --linelen;
 
-        ed_cfg.row.size = linelen;
-        ed_cfg.row.data = malloc(linelen + 1);
-        memcpy(ed_cfg.row.data, line, linelen);
-        ed_cfg.row.data[linelen] = '\0';
-        ed_cfg.num_rows = 1;
+        editor_append_row(line, linelen);
     }
 
     free(line);
@@ -288,10 +298,10 @@ void editor_draw_rows(struct abuf *ab)
         }
         else
         {
-            int len = ed_cfg.row.size;
+            int len = ed_cfg.row[y].size;
             if(len > ed_cfg.screen_cols) len = ed_cfg.screen_cols;
 
-            ab_append(ab, ed_cfg.row.data, len);
+            ab_append(ab, ed_cfg.row[y].data, len);
         }
         ab_append(ab, "\x1b[K", 3); // clear the line (default - to the right of the cursor)
         if(y < ed_cfg.screen_rows - 1)
@@ -387,6 +397,7 @@ void init_editor()
     ed_cfg.cursor_y = 0;
 
     ed_cfg.num_rows = 0;
+    ed_cfg.row = NULL;
 
     if(get_window_size(&ed_cfg.screen_cols, &ed_cfg.screen_rows) == -1)
         die("get_window_size");
