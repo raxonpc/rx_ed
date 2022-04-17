@@ -15,10 +15,15 @@
 
 enum editor_key
 {
-    ARROW_LEFT = 'a',
-    ARROW_RIGHT = 'd',
-    ARROW_UP = 'w',
-    ARROW_DOWN = 's',
+    ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    DEL_KEY,
+    HOME_KEY,
+    END_KEY,
+    PAGE_UP,
+    PAGE_DOWN,
 };
 
 /*** DATA ***/
@@ -67,7 +72,7 @@ void enable_raw_mode()
         die("tcsetattr");
 }
 
-char editor_read_key()
+int editor_read_key()
 {
     ssize_t nread;
     char c;
@@ -86,16 +91,58 @@ char editor_read_key()
 
         if(seq[0] == '[')
         {
+            if(seq[1] >= '0' && seq[1] <= '9')
+            {
+                if(read(STDIN_FILENO, seq + 2, 1) != 1) return '\x1b';
+
+                if(seq[2] == '~')
+                {
+                    switch (seq[1])
+                    {
+                        case '1':
+                            return HOME_KEY;
+                        case '3':
+                            return DEL_KEY;
+                        case '4':
+                            return END_KEY;
+                        case '5':
+                            return PAGE_UP;
+                        case '6':
+                            return PAGE_DOWN;
+                        case '7':
+                            return HOME_KEY;
+                        case '8':
+                            return END_KEY;
+                    }
+                }
+            }
+            else
+            {
+                switch (seq[1])
+                {
+                    case 'A':
+                        return ARROW_UP;
+                    case 'B':
+                        return ARROW_DOWN;
+                    case 'C':
+                        return ARROW_RIGHT;
+                    case 'D':
+                        return ARROW_LEFT;
+                    case 'H':
+                        return HOME_KEY;
+                    case 'F':
+                        return END_KEY;
+                }
+            }
+        }
+        else if(seq[0] == '0')
+        {
             switch(seq[1])
             {
-                case 'A':
-                    return ARROW_UP;
-                case 'B':
-                    return ARROW_DOWN;
-                case 'C':
-                    return ARROW_RIGHT;
-                case 'D':
-                    return ARROW_LEFT;
+                case 'H':
+                    return HOME_KEY;
+                case 'F':
+                    return END_KEY;
             }
         }
         return '\x1b';
@@ -216,7 +263,7 @@ void editor_refresh_screen()
     editor_draw_rows(&ab);
 
     char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", ed_cfg.cursor_x + 1, ed_cfg.cursor_y);
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", ed_cfg.cursor_y + 1, ed_cfg.cursor_x + 1);
     ab_append(&ab, buf, strlen(buf));
 
     ab_append(&ab, "\x1b[?25h", 6); // show the cursor
@@ -227,18 +274,22 @@ void editor_refresh_screen()
 
 /*** INPUT ***/
 
-void editor_move_cursor(char key)
+void editor_move_cursor(int key)
 {
     switch(key)
     {
         case ARROW_LEFT:
-            --ed_cfg.cursor_x; break;
+            if(ed_cfg.cursor_x != 0) --ed_cfg.cursor_x;
+            break;
         case ARROW_RIGHT:
-            ++ed_cfg.cursor_x; break;
+            if(ed_cfg.cursor_x != ed_cfg.screen_cols - 1) ++ed_cfg.cursor_x;
+            break;
         case ARROW_UP:
-            --ed_cfg.cursor_y; break;
+            if(ed_cfg.cursor_y != 0 ) --ed_cfg.cursor_y;
+            break;
         case ARROW_DOWN:
-            ++ed_cfg.cursor_y; break;
+            if(ed_cfg.cursor_y != ed_cfg.screen_rows - 1) ++ed_cfg.cursor_y;
+            break;
         default: break;
     }
 }
@@ -247,9 +298,7 @@ void editor_move_cursor(char key)
 
 void editor_process_keypress()
 {
-    char c;
-
-    c = editor_read_key();
+    int c = editor_read_key();
 
     switch(c)
     {
@@ -257,6 +306,20 @@ void editor_process_keypress()
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+
+        case PAGE_UP:
+            ed_cfg.cursor_y = 0;
+            break;
+        case PAGE_DOWN:
+            ed_cfg.cursor_y = ed_cfg.screen_rows - 1;
+            break;
+        case HOME_KEY:
+            ed_cfg.cursor_x = 0;
+            break;
+        case END_KEY:
+            ed_cfg.cursor_x = ed_cfg.screen_cols - 1;
+            break;
+
         case ARROW_LEFT:
         case ARROW_RIGHT:
         case ARROW_UP:
