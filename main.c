@@ -204,17 +204,29 @@ int get_window_size(int *cols, int *rows)
 
 /*** file i/o ***/
 
-void editor_open()
+void editor_open(char *filename)
 {
-    char *line = "Hello, world!";
-    ssize_t linelen = 13;
+    FILE *fp = fopen(filename, "r");
+    if(!fp) die("fopen");
 
-    ed_cfg.row.size = linelen;
-    ed_cfg.row.data = malloc(linelen + 1);
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen = getline(&line, &linecap, fp);
 
-    memcpy(ed_cfg.row.data, line, linelen);
-    ed_cfg.row.data[linelen] = '\0';
-    ed_cfg.num_rows = 1;
+    if(linelen != -1)
+    {
+        while(linelen > 0 && line[linelen - 1] == '\n' || line[linelen - 1] == '\r')
+            --linelen;
+
+        ed_cfg.row.size = linelen;
+        ed_cfg.row.data = malloc(linelen + 1);
+        memcpy(ed_cfg.row.data, line, linelen);
+        ed_cfg.row.data[linelen] = '\0';
+        ed_cfg.num_rows = 1;
+    }
+
+    free(line);
+    fclose(fp);
 }
 
 /*** APPEND BUFFER ***/
@@ -252,7 +264,7 @@ void editor_draw_rows(struct abuf *ab)
     {
         if(y >= ed_cfg.num_rows)
         {
-            if (y == ed_cfg.screen_rows / 3)
+            if (ed_cfg.num_rows == 0 && y == ed_cfg.screen_rows / 3)
             {
                 char welcome[80] = {0};
                 int welcome_ln = snprintf(welcome, sizeof(welcome), "rx_ed - version %s", RX_ED_VERSION);
@@ -379,11 +391,15 @@ void init_editor()
     if(get_window_size(&ed_cfg.screen_cols, &ed_cfg.screen_rows) == -1)
         die("get_window_size");
 }
-int main()
+int main(int argc, char *argv[])
 {
     enable_raw_mode();
     init_editor();
-    editor_open();
+
+    if(argc >= 2)
+    {
+        editor_open(argv[1]);
+    }
 
     while(1) {
         editor_refresh_screen();
